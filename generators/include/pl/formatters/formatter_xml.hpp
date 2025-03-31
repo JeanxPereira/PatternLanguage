@@ -1,213 +1,10 @@
 #pragma once
 
 #include <pl/formatters/formatter.hpp>
-#include <pl/patterns/pattern_error.hpp>
+#include <hex/helpers/fmt.hpp>
+#include <pl/core/ast/ast_node.hpp>
 
 namespace pl::gen::fmt {
-
-    class XmlPatternVisitor : public FormatterPatternVisitor {
-    public:
-        XmlPatternVisitor() = default;
-        ~XmlPatternVisitor() override = default;
-
-        void visit(pl::ptrn::PatternArrayDynamic& pattern)  override { formatArray(&pattern);       }
-        void visit(pl::ptrn::PatternArrayStatic& pattern)   override { formatArray(&pattern);       }
-        void visit(pl::ptrn::PatternBitfieldField& pattern) override { formatValue(&pattern);       }
-        void visit(pl::ptrn::PatternBitfieldArray& pattern) override { formatArray(&pattern);       }
-        void visit(pl::ptrn::PatternBitfield& pattern)      override { formatObject(&pattern);      }
-        void visit(pl::ptrn::PatternBoolean& pattern)       override { formatValue(&pattern);       }
-        void visit(pl::ptrn::PatternCharacter& pattern)     override { formatString(&pattern);      }
-        void visit(pl::ptrn::PatternEnum& pattern)          override { formatString(&pattern);      }
-        void visit(pl::ptrn::PatternFloat& pattern)         override { formatValue(&pattern);       }
-        void visit(pl::ptrn::PatternPadding& pattern)       override { wolv::util::unused(pattern); }
-        void visit(pl::ptrn::PatternPointer& pattern)       override { formatPointer(&pattern);     }
-        void visit(pl::ptrn::PatternSigned& pattern)        override { formatValue(&pattern);       }
-        void visit(pl::ptrn::PatternString& pattern)        override { formatString(&pattern);      }
-        void visit(pl::ptrn::PatternStruct& pattern)        override { formatObject(&pattern);      }
-        void visit(pl::ptrn::PatternUnion& pattern)         override { formatObject(&pattern);      }
-        void visit(pl::ptrn::PatternUnsigned& pattern)      override { formatValue(&pattern);       }
-        void visit(pl::ptrn::PatternWideCharacter& pattern) override { formatString(&pattern);      }
-        void visit(pl::ptrn::PatternWideString& pattern)    override { formatString(&pattern);      }
-        void visit(pl::ptrn::PatternError& pattern)         override { formatString(&pattern);      }
-        void visit(pl::ptrn::Pattern& pattern)              override { formatString(&pattern);      }
-
-        [[nodiscard]] auto getResult() const {
-            return this->m_result;
-        }
-
-        void pushIndent() {
-            this->m_indent += 4;
-        }
-
-        void popIndent() {
-            this->m_indent -= 4;
-        }
-
-    private:
-        void addLine(const std::string &variableName, const std::string& str, bool noVariableName = false) {
-            this->m_result += std::string(this->m_indent, ' ');
-            
-            if (!str.empty())
-                this->m_result += str;
-                
-            this->m_result += '\n';
-        }
-
-        void formatString(const pl::ptrn::Pattern *pattern) {
-            if (pattern->getVisibility() == ptrn::Visibility::Hidden) return;
-            if (pattern->getVisibility() == ptrn::Visibility::TreeHidden) return;
-
-            const auto string = pattern->toString();
-
-            std::string result;
-            for (char c : string) {
-                if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~')
-                    result += c;
-                else
-                    result += ::fmt::format("%{:02X}", c);
-            }
-
-            std::string xmlElement = ::fmt::format("<{0}>{1}</{0}>", 
-                pattern->getVariableName(), 
-                result);
-                
-            addLine(pattern->getVariableName(), xmlElement);
-        }
-
-        template<typename T>
-        void formatArray(T *pattern) {
-            if (pattern->getVisibility() == ptrn::Visibility::Hidden) return;
-            if (pattern->getVisibility() == ptrn::Visibility::TreeHidden) return;
-
-            addLine("", ::fmt::format("<{} type=\"array\">", pattern->getVariableName()));
-            pushIndent();
-            
-            // Add meta information
-            if (this->isMetaInformationEnabled()) {
-                addLine("", "<meta>");
-                pushIndent();
-                
-                for (const auto &[name, value] : this->getMetaInformation(pattern))
-                    addLine("", ::fmt::format("<{0}>{1}</{0}>", name, value));
-                
-                popIndent();
-                addLine("", "</meta>");
-            }
-            
-            // Add elements
-            addLine("", "<elements>");
-            pushIndent();
-            pattern->forEachEntry(0, pattern->getEntryCount(), [&](u64 index, auto member) {
-                addLine("", ::fmt::format("<element index=\"{}\">", index));
-                pushIndent();
-                member->accept(*this);
-                popIndent();
-                addLine("", "</element>");
-            });
-            popIndent();
-            addLine("", "</elements>");
-            
-            popIndent();
-            addLine("", ::fmt::format("</{}>", pattern->getVariableName()));
-        }
-
-        void formatPointer(ptrn::PatternPointer *pattern) {
-            if (pattern->getVisibility() == ptrn::Visibility::Hidden) return;
-            if (pattern->getVisibility() == ptrn::Visibility::TreeHidden) return;
-
-            addLine("", ::fmt::format("<{} type=\"pointer\">", pattern->getVariableName()));
-            pushIndent();
-            
-            // Add meta information
-            if (this->isMetaInformationEnabled()) {
-                addLine("", "<meta>");
-                pushIndent();
-                
-                for (const auto &[name, value] : this->getMetaInformation(pattern))
-                    addLine("", ::fmt::format("<{0}>{1}</{0}>", name, value));
-                
-                popIndent();
-                addLine("", "</meta>");
-            }
-            
-            // Add pointed content
-            addLine("", "<pointed_content>");
-            pushIndent();
-            pattern->getPointedAtPattern()->accept(*this);
-            popIndent();
-            addLine("", "</pointed_content>");
-            
-            popIndent();
-            addLine("", ::fmt::format("</{}>", pattern->getVariableName()));
-        }
-
-        template<typename T>
-        void formatObject(T *pattern) {
-            if (pattern->getVisibility() == ptrn::Visibility::Hidden) return;
-            if (pattern->getVisibility() == ptrn::Visibility::TreeHidden) return;
-
-            if (pattern->isSealed()) {
-                formatValue(pattern);
-            } else {
-                addLine("", ::fmt::format("<{} type=\"object\">", pattern->getVariableName()));
-                pushIndent();
-                
-                // Add meta information
-                if (this->isMetaInformationEnabled()) {
-                    addLine("", "<meta>");
-                    pushIndent();
-                    
-                    for (const auto &[name, value] : this->getMetaInformation(pattern))
-                        addLine("", ::fmt::format("<{0}>{1}</{0}>", name, value));
-                    
-                    popIndent();
-                    addLine("", "</meta>");
-                }
-                
-                // Add members
-                addLine("", "<members>");
-                pushIndent();
-                pattern->forEachEntry(0, pattern->getEntryCount(), [&](u64, auto member) {
-                    member->accept(*this);
-                });
-                popIndent();
-                addLine("", "</members>");
-                
-                popIndent();
-                addLine("", ::fmt::format("</{}>", pattern->getVariableName()));
-            }
-        }
-
-        void formatValue(const pl::ptrn::Pattern *pattern) {
-            if (pattern->getVisibility() == ptrn::Visibility::Hidden) return;
-            if (pattern->getVisibility() == ptrn::Visibility::TreeHidden) return;
-
-            if (const auto &functionName = pattern->getReadFormatterFunction(); !functionName.empty())
-                formatString(pattern);
-            else if (!pattern->isSealed()) {
-                auto literal = pattern->getValue();
-
-                std::string value = std::visit(wolv::util::overloaded {
-                    [&](integral auto val)            -> std::string { return ::fmt::format("{}", val); },
-                    [&](std::floating_point auto val) -> std::string { return ::fmt::format("{}", val); },
-                    [&](const std::string &val)       -> std::string { return val; },
-                    [&](bool val)                     -> std::string { return val ? "true" : "false"; },
-                    [&](char val)                     -> std::string { return ::fmt::format("{}", val); },
-                    [&](const std::shared_ptr<ptrn::Pattern> &val) -> std::string { return val->toString(); },
-                }, literal);
-                
-                std::string xmlElement = ::fmt::format("<{0}>{1}</{0}>", 
-                    pattern->getVariableName(), 
-                    value);
-                    
-                addLine(pattern->getVariableName(), xmlElement);
-            }
-        }
-
-    private:
-        std::string m_result;
-        u32 m_indent = 0;
-    };
 
     class FormatterXml : public Formatter {
     public:
@@ -217,27 +14,280 @@ namespace pl::gen::fmt {
         [[nodiscard]] std::string getFileExtension() const override { return "xml"; }
 
         [[nodiscard]] std::vector<u8> format(const PatternLanguage &runtime) override {
-            XmlPatternVisitor visitor;
-            visitor.enableMetaInformation(this->isMetaInformationEnabled());
-
-            // XML header
-            std::string result = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-            result += "<pattern_language>\n";
-            
-            // Process patterns
-            visitor.pushIndent();
-            for (const auto& pattern : runtime.getPatterns()) {
-                pattern->accept(visitor);
-            }
-            visitor.popIndent();
-            
-            // Add visitor result
-            result += visitor.getResult();
-            
-            // Close root element
-            result += "</pattern_language>";
+            auto result = generateXml(runtime);
 
             return { result.begin(), result.end() };
+        }
+
+    private:
+        class XmlVisitor : public FormatterPatternVisitor {
+        public:
+            explicit XmlVisitor(const PatternLanguage &runtime) : m_runtime(runtime) { }
+
+            void visit(ptrn::PatternArrayDynamic *pattern) override {
+                processPattern(pattern, [this, pattern]() {
+                    for (u64 i = 0; i < pattern->getEntryCount(); i++) {
+                        auto &entry = pattern->getEntry(i);
+                        
+                        m_output += ::fmt::format("{}<entry index=\"{}\">", indent(m_depth + 1), i);
+                        
+                        m_depth++;
+                        entry->accept(*this);
+                        m_depth--;
+                        
+                        m_output += ::fmt::format("{}</entry>\n", indent(m_depth + 1));
+                    }
+                });
+            }
+
+            void visit(ptrn::PatternArrayStatic *pattern) override {
+                processPattern(pattern, [this, pattern]() {
+                    for (u64 i = 0; i < pattern->getEntryCount(); i++) {
+                        auto &entry = pattern->getEntry(i);
+                        
+                        m_output += ::fmt::format("{}<entry index=\"{}\">", indent(m_depth + 1), i);
+                        
+                        m_depth++;
+                        entry->accept(*this);
+                        m_depth--;
+                        
+                        m_output += ::fmt::format("{}</entry>\n", indent(m_depth + 1));
+                    }
+                });
+            }
+
+            void visit(ptrn::PatternBitfield *pattern) override {
+                processPattern(pattern, [this, pattern]() {
+                    for (auto &[name, bitfield] : pattern->getBitfields()) {
+                        m_output += ::fmt::format("{}<field name=\"{}\">", indent(m_depth + 1), escapeXml(name));
+                        
+                        m_depth++;
+                        bitfield.pattern->accept(*this);
+                        m_depth--;
+                        
+                        m_output += ::fmt::format("{}</field>\n", indent(m_depth + 1));
+                    }
+                });
+            }
+
+            void visit(ptrn::PatternBoolean *pattern) override {
+                processPattern(pattern, [pattern]() {
+                    return ::fmt::format("{}", pattern->getValue() ? "true" : "false");
+                });
+            }
+
+            void visit(ptrn::PatternCharacter *pattern) override {
+                processPattern(pattern, [pattern]() {
+                    auto value = pattern->getValue();
+                    if (std::isprint(value))
+                        return ::fmt::format("'{}'", escapeXml(std::string(1, value)));
+                    else
+                        return ::fmt::format("{}", value);
+                });
+            }
+
+            void visit(ptrn::PatternEnum *pattern) override {
+                processPattern(pattern, [pattern]() {
+                    return ::fmt::format("{}", escapeXml(pattern->getFormattedValue()));
+                });
+            }
+
+            void visit(ptrn::PatternFloat *pattern) override {
+                processPattern(pattern, [pattern]() {
+                    return ::fmt::format("{}", pattern->getValue());
+                });
+            }
+
+            void visit(ptrn::PatternPadding *pattern) override {
+                processPattern(pattern, [pattern]() {
+                    return ::fmt::format("<![CDATA[{}]]>", pattern->getFormattedValue());
+                });
+            }
+
+            void visit(ptrn::PatternPointer *pattern) override {
+                processPattern(pattern, [this, pattern]() {
+                    auto value = ::fmt::format("{:#x}", pattern->getValue());
+                    m_output += ::fmt::format("{}<value>{}</value>\n", indent(m_depth + 1), value);
+                    
+                    if (pattern->getPointedAtPattern() != nullptr) {
+                        m_output += ::fmt::format("{}<pointed_data>\n", indent(m_depth + 1));
+                        
+                        m_depth++;
+                        pattern->getPointedAtPattern()->accept(*this);
+                        m_depth--;
+                        
+                        m_output += ::fmt::format("{}</pointed_data>\n", indent(m_depth + 1));
+                    }
+
+                    return "";
+                });
+            }
+
+            void visit(ptrn::PatternSigned *pattern) override {
+                processPattern(pattern, [pattern]() {
+                    return ::fmt::format("{}", pattern->getValue());
+                });
+            }
+
+            void visit(ptrn::PatternString *pattern) override {
+                processPattern(pattern, [pattern]() {
+                    return ::fmt::format("{}", escapeXml(pattern->getValue()));
+                });
+            }
+
+            void visit(ptrn::PatternStruct *pattern) override {
+                processPattern(pattern, [this, pattern]() {
+                    for (auto &[name, member] : pattern->getMembers()) {
+                        m_output += ::fmt::format("{}<member name=\"{}\">\n", indent(m_depth + 1), escapeXml(name));
+                        
+                        m_depth++;
+                        member->accept(*this);
+                        m_depth--;
+                        
+                        m_output += ::fmt::format("{}</member>\n", indent(m_depth + 1));
+                    }
+                });
+            }
+
+            void visit(ptrn::PatternUnion *pattern) override {
+                processPattern(pattern, [this, pattern]() {
+                    for (auto &[name, member] : pattern->getMembers()) {
+                        m_output += ::fmt::format("{}<member name=\"{}\">\n", indent(m_depth + 1), escapeXml(name));
+                        
+                        m_depth++;
+                        member->accept(*this);
+                        m_depth--;
+                        
+                        m_output += ::fmt::format("{}</member>\n", indent(m_depth + 1));
+                    }
+                });
+            }
+
+            void visit(ptrn::PatternUnsigned *pattern) override {
+                processPattern(pattern, [pattern]() {
+                    return ::fmt::format("{}", pattern->getValue());
+                });
+            }
+
+            void visit(ptrn::PatternWideCharacter *pattern) override {
+                processPattern(pattern, [pattern]() {
+                    auto value = pattern->getValue();
+                    if (value <= 0x7F && std::isprint(value))
+                        return ::fmt::format("'{}'", escapeXml(std::string(1, value)));
+                    else
+                        return ::fmt::format("{:#x}", value);
+                });
+            }
+
+            void visit(ptrn::PatternWideString *pattern) override {
+                processPattern(pattern, [pattern]() {
+                    return ::fmt::format("{}", escapeXml(pattern->getValue()));
+                });
+            }
+
+            [[nodiscard]] std::string getOutput() const {
+                return m_output;
+            }
+
+        private:
+            const PatternLanguage &m_runtime;
+            std::string m_output;
+            u32 m_depth = 0;
+
+            template<typename Func>
+            void processPattern(ptrn::Pattern *pattern, Func func) {
+                auto typeName = pattern->getTypeName();
+                auto endian = pattern->getEndian() == std::endian::little ? "little" : "big";
+                auto colorHex = ::fmt::format("#{:08X}", pattern->getColor());
+                auto address = ::fmt::format("{:#x}", pattern->getOffset());
+                auto size = ::fmt::format("{}", pattern->getSize());
+                
+                m_output += ::fmt::format("{}<{} name=\"{}\" endian=\"{}\" color=\"{}\" address=\"{}\" size=\"{}\"", 
+                    indent(m_depth), 
+                    typeName,
+                    escapeXml(pattern->getVariableName()),
+                    endian,
+                    colorHex,
+                    address,
+                    size
+                );
+
+                auto comment = pattern->getComment();
+                if (!comment.empty()) {
+                    m_output += ::fmt::format(" comment=\"{}\"", escapeXml(comment));
+                }
+
+                auto result = func();
+                if (result.empty()) {
+                    if (typeName == "padding" || typeName == "union" || typeName == "struct" || 
+                        typeName == "array_static" || typeName == "array_dynamic" || typeName == "bitfield" || 
+                        typeName == "pointer") {
+                        m_output += ">\n";
+                        m_output += ::fmt::format("{}</{}>", indent(m_depth), typeName);
+                    } else {
+                        m_output += "/>";
+                    }
+                } else {
+                    m_output += ">";
+                    m_output += result;
+                    m_output += ::fmt::format("</{}>", typeName);
+                }
+                m_output += "\n";
+            }
+
+            static std::string indent(u32 depth) {
+                return std::string(depth * 2, ' ');
+            }
+
+            static std::string escapeXml(const std::string &str) {
+                std::string result;
+                result.reserve(str.size());
+                
+                for (char c : str) {
+                    switch (c) {
+                        case '&': result += "&amp;"; break;
+                        case '<': result += "&lt;"; break;
+                        case '>': result += "&gt;"; break;
+                        case '"': result += "&quot;"; break;
+                        case '\'': result += "&apos;"; break;
+                        default: result += c; break;
+                    }
+                }
+                
+                return result;
+            }
+        };
+
+        static std::string generateXml(const PatternLanguage &runtime) {
+            XmlVisitor visitor(runtime);
+            visitor.enableMetaInformation(true);
+            
+            auto &evaluator = runtime.getInternals().evaluator;
+            auto patterns = runtime.getPatterns();
+            
+            std::string output = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+            output += "<pattern_language>\n";
+            
+            // Add file metadata
+            output += "  <metadata>\n";
+            output += ::fmt::format("    <base_address>{:#x}</base_address>\n", evaluator->getDataBaseAddress());
+            output += ::fmt::format("    <data_size>{}</data_size>\n", evaluator->getDataSize());
+            output += "  </metadata>\n";
+            
+            // Add patterns
+            output += "  <patterns>\n";
+            
+            for (auto &pattern : patterns) {
+                if (pattern->isGlobalPattern()) {
+                    visitor.m_depth = 2;
+                    pattern->accept(visitor);
+                }
+            }
+            
+            output += "  </patterns>\n";
+            output += "</pattern_language>";
+            
+            return output + visitor.getOutput();
         }
     };
 
