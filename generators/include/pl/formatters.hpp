@@ -4,6 +4,7 @@
 #include <pl/formatters/formatter_json.hpp>
 #include <pl/formatters/formatter_yaml.hpp>
 #include <pl/formatters/formatter_html.hpp>
+#include <pl/formatters/formatter_xml.hpp>
 
 namespace pl::gen::fmt {
 
@@ -11,7 +12,8 @@ namespace pl::gen::fmt {
     using Formatters = std::tuple<
             FormatterJson,
             FormatterYaml,
-            FormatterHtml
+            FormatterHtml,
+            FormatterXml
     >;
 
     using FormatterArray = std::array<std::unique_ptr<pl::gen::fmt::Formatter>, std::tuple_size_v<Formatters>>;
